@@ -1,0 +1,201 @@
+@page "/"
+@attribute [Authorize]
+@inject IGameService GameService
+@using GameServer.Admin.Services
+@using GameServer.Common.Models
+@using Microsoft.AspNetCore.Authorization
+@implements IDisposable
+
+<h1>Game Server Dashboard</h1>
+
+@if (_stats == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Total Players</h5>
+                    <h2 class="card-text">@_stats.TotalPlayers</h2>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <span>Online: @_stats.OnlinePlayers</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Active Rooms</h5>
+                    <h2 class="card-text">@_stats.ActiveRooms</h2>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <span>Total: @_stats.TotalRooms</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-white mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Waiting Rooms</h5>
+                    <h2 class="card-text">@_stats.WaitingRooms</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Finished Games</h5>
+                    <h2 class="card-text">@_stats.FinishedRooms</h2>
+                </div>
+                <div class="card-footer d-flex align-items-center justify-content-between">
+                    <span>Abandoned: @_stats.AbandonedRooms</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-table mr-1"></i>
+                    Active Game Rooms
+                </div>
+                <div class="card-body">
+                    @if (_rooms == null || !_rooms.Any())
+                    {
+                        <p>No active game rooms.</p>
+                    }
+                    else
+                    {
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Game Type</th>
+                                    <th>Players</th>
+                                    <th>State</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var room in _rooms.Where(r => r.State == GameState.Playing || r.State == GameState.Waiting))
+                                {
+                                    <tr>
+                                        <td>@room.Name</td>
+                                        <td>@room.GameType</td>
+                                        <td>@room.Players.Count / @room.MaxPlayers</td>
+                                        <td>@room.State</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-danger" @onclick="() => TerminateRoom(room.Id)">Terminate</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-users mr-1"></i>
+                    Online Players
+                </div>
+                <div class="card-body">
+                    @if (_players == null || !_players.Any())
+                    {
+                        <p>No online players.</p>
+                    }
+                    else
+                    {
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Status</th>
+                                    <th>Games Played</th>
+                                    <th>Win Rate</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var player in _players.Where(p => p.IsConnected))
+                                {
+                                    <tr>
+                                        <td>@player.Username</td>
+                                        <td>@(player.IsConnected ? "Online" : "Offline")</td>
+                                        <td>@player.Stats.GamesPlayed</td>
+                                        <td>@(player.Stats.GamesPlayed > 0 ? $"{(double)player.Stats.GamesWon / player.Stats.GamesPlayed:P0}" : "N/A")</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-warning" @onclick="() => BanPlayer(player.Id)">Ban</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private ServerStats _stats;
+    private List<GameRoom> _rooms;
+    private List<Player> _players;
+    private System.Threading.Timer _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshDataAsync();
+        
+        // Set up timer to refresh data every 10 seconds
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await RefreshDataAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
+    }
+
+    private async Task RefreshDataAsync()
+    {
+        try
+        {
+            _stats = await GameService.GetServerStatsAsync();
+            _rooms = await GameService.GetAllRoomsAsync();
+            _players = await GameService.GetAllPlayersAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error refreshing data: {ex.Message}");
+        }
+    }
+
+    private async Task TerminateRoom(string roomId)
+    {
+        if (await GameService.TerminateRoomAsync(roomId))
+        {
+            await RefreshDataAsync();
+        }
+    }
+
+    private async Task BanPlayer(string playerId)
+    {
+        if (await GameService.BanPlayerAsync(playerId))
+        {
+            await RefreshDataAsync();
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}

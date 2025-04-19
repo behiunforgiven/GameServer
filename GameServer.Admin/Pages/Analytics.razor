@@ -1,0 +1,242 @@
+@page "/analytics"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@using System.Net.Http.Json
+@using System.Text.Json
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.JSInterop
+@implements IDisposable
+
+<h1>Game Server Analytics</h1>
+
+@if (_metrics == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-chart-bar mr-1"></i>
+                    Game Type Popularity
+                </div>
+                <div class="card-body">
+                    <canvas id="gameTypeChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-chart-line mr-1"></i>
+                    Player Activity (Last 7 Days)
+                </div>
+                <div class="card-body">
+                    <canvas id="playerActivityChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-trophy mr-1"></i>
+                    Top Players
+                </div>
+                <div class="card-body">
+                    @if (_topPlayers == null || !_topPlayers.Any())
+                    {
+                        <p>No player data available.</p>
+                    }
+                    else
+                    {
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Username</th>
+                                    <th>Rating</th>
+                                    <th>Games Played</th>
+                                    <th>Win Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (int i = 0; i < _topPlayers.Count; i++)
+                                {
+                                    var player = _topPlayers[i];
+                                    <tr>
+                                        <td>@(i + 1)</td>
+                                        <td>@player.Username</td>
+                                        <td>@player.Rating</td>
+                                        <td>@player.GamesPlayed</td>
+                                        <td>@(player.WinRate.ToString("P0"))</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-clock mr-1"></i>
+                    Average Game Duration
+                </div>
+                <div class="card-body">
+                    <canvas id="gameDurationChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="fas fa-history mr-1"></i>
+                    Game History (Last 7 Days)
+                </div>
+                <div class="card-body">
+                    <canvas id="gameHistoryChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private Dictionary<string, object> _metrics;
+    private List<TopPlayer> _topPlayers;
+    private List<GameTypePopularity> _gameTypePopularity;
+    private List<DailyActivity> _playerActivity;
+    private List<GameDuration> _gameDurations;
+    private List<DailyGameCount> _gameHistory;
+    private IJSObjectReference _chartModule;
+    private bool _chartsInitialized = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAnalyticsDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _chartModule = await JSRuntime.InvokeAsync<IJSObjectReference>("import", new object[] { "./js/charts.js" });
+        }
+
+        if (_metrics != null && !_chartsInitialized)
+        {
+            await InitializeChartsAsync();
+            _chartsInitialized = true;
+        }
+    }
+
+    private async Task LoadAnalyticsDataAsync()
+    {
+        try
+        {
+            _metrics = await Http.GetFromJsonAsync<Dictionary<string, object>>("api/admin/analytics");
+            
+            // Parse the JSON data into strongly typed objects
+            _topPlayers = JsonSerializer.Deserialize<List<TopPlayer>>(_metrics["topPlayers"].ToString());
+            _gameTypePopularity = JsonSerializer.Deserialize<List<GameTypePopularity>>(_metrics["gameTypePopularity"].ToString());
+            _playerActivity = JsonSerializer.Deserialize<List<DailyActivity>>(_metrics["playerActivity"].ToString());
+            _gameDurations = JsonSerializer.Deserialize<List<GameDuration>>(_metrics["gameDurations"].ToString());
+            _gameHistory = JsonSerializer.Deserialize<List<DailyGameCount>>(_metrics["gameHistory"].ToString());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading analytics data: {ex.Message}");
+        }
+    }
+
+    private async Task InitializeChartsAsync()
+    {
+        if (_chartModule != null)
+        {
+            try
+            {
+                // Game Type Popularity Chart
+                await _chartModule.InvokeVoidAsync("createPieChart", "gameTypeChart", 
+                    _gameTypePopularity.Select(g => g.GameType).ToArray(),
+                    _gameTypePopularity.Select(g => g.Count).ToArray());
+
+                // Player Activity Chart
+                await _chartModule.InvokeVoidAsync("createLineChart", "playerActivityChart",
+                    _playerActivity.Select(p => p.Date.ToString("MM/dd")).ToArray(),
+                    _playerActivity.Select(p => p.ActivePlayers).ToArray());
+
+                // Game Duration Chart
+                await _chartModule.InvokeVoidAsync("createBarChart", "gameDurationChart",
+                    _gameDurations.Select(g => g.GameType).ToArray(),
+                    _gameDurations.Select(g => g.AverageDurationMinutes).ToArray());
+
+                // Game History Chart
+                await _chartModule.InvokeVoidAsync("createStackedBarChart", "gameHistoryChart",
+                    _gameHistory.Select(g => g.Date.ToString("MM/dd")).ToArray(),
+                    new object[] {
+                        new { 
+                            label = "Completed Games",
+                            data = _gameHistory.Select(g => g.CompletedGames).ToArray()
+                        },
+                        new {
+                            label = "Abandoned Games",
+                            data = _gameHistory.Select(g => g.AbandonedGames).ToArray()
+                        }
+                    });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error initializing charts: {ex.Message}");
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _chartModule?.DisposeAsync();
+    }
+
+    public class TopPlayer
+    {
+        public string Username { get; set; }
+        public int Rating { get; set; }
+        public int GamesPlayed { get; set; }
+        public int GamesWon { get; set; }
+        public decimal WinRate => GamesPlayed > 0 ? (decimal)GamesWon / GamesPlayed : 0;
+    }
+
+    public class GameTypePopularity
+    {
+        public string GameType { get; set; }
+        public int Count { get; set; }
+    }
+
+    public class DailyActivity
+    {
+        public DateTime Date { get; set; }
+        public int ActivePlayers { get; set; }
+    }
+
+    public class GameDuration
+    {
+        public string GameType { get; set; }
+        public double AverageDurationMinutes { get; set; }
+    }
+
+    public class DailyGameCount
+    {
+        public DateTime Date { get; set; }
+        public int CompletedGames { get; set; }
+        public int AbandonedGames { get; set; }
+    }
+}
