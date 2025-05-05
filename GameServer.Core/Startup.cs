@@ -8,14 +8,9 @@ using Microsoft.OpenApi.Models;
 
 namespace GameServer.Core
 {
-    public class Startup
+    public class Startup(IConfiguration configuration)
     {
-        public Startup(IConfiguration configuration)
-        {
-            Configuration = configuration;
-        }
-
-        public IConfiguration Configuration { get; }
+        public IConfiguration Configuration { get; } = configuration;
 
         public void ConfigureServices(IServiceCollection services)
         {
@@ -32,13 +27,13 @@ namespace GameServer.Core
                     builder
                         .AllowAnyMethod()
                         .AllowAnyHeader()
-                        .WithOrigins(Configuration["AllowedOrigins"].Split(','))
+                        .WithOrigins(Configuration["AllowedOrigins"]!.Split(','))
                         .AllowCredentials();
                 });
             });
             
             // Add JWT Authentication
-            var key = Encoding.ASCII.GetBytes(Configuration["Jwt:Secret"]);
+            var key = Encoding.ASCII.GetBytes(Configuration["Jwt:Secret"]!);
             services.AddAuthentication(x =>
             {
                 x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -117,7 +112,7 @@ namespace GameServer.Core
             services.AddSingleton<ExtensionLoader>(provider => 
                 new ExtensionLoader(
                     provider.GetRequiredService<ILogger<ExtensionLoader>>(),
-                    Configuration["ExtensionsPath"]));
+                    Configuration["ExtensionsPath"]!));
             services.AddSingleton<ExtensionManager>();
             services.AddSingleton<MatchmakingService>();
             services.AddSingleton<AnalyticsService>();
